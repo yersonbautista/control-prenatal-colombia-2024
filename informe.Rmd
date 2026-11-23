@@ -1,0 +1,1095 @@
+---
+title: "Control prenatal en Colombia, 2024: análisis exploratorio de las consultas prenatales de los nacidos vivos"
+subtitle: "Tarea I – Análisis Exploratorio de Datos con microdatos del DANE (Estadísticas Vitales, EEVV 2024)"
+author: "Leander Bautista"
+date: "22 de noviembre de 2026"
+lang: es
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: true
+    theme: readable
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+# Configuración general del informe
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 5,
+  dpi = 110
+)
+
+options(scipen = 999)
+
+# Paquetes necesarios
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(knitr)
+library(scales)
+
+# Rutas de los archivos
+ruta_nac <- "C:/Users/USER/Desktop/actividad_1/DATOS/BD-EEVV-Nacimientos-2024.csv"
+
+ruta_mun <- "C:/Users/USER/Desktop/actividad_1/DOCUMENTACION/DIVIPOLA_Municipios.xlsx"
+
+ruta_dep <- "C:/Users/USER/Desktop/actividad_1/DOCUMENTACION/DIVIPOLA_Departamentos.xlsx"
+
+# Verificar que los archivos existan
+stopifnot(file.exists(ruta_nac))
+stopifnot(file.exists(ruta_mun))
+stopifnot(file.exists(ruta_dep))
+
+# Funciones auxiliares
+fmt_n <- function(x) {
+  format(x, big.mark = ".", decimal.mark = ",",
+         scientific = FALSE, trim = TRUE)
+}
+
+fmt_d <- function(x, d = 2) {
+  format(round(x, d), big.mark = ".", decimal.mark = ",",
+         nsmall = d, trim = TRUE)
+}
+
+fmt_p <- function(x, d = 1) {
+  paste0(fmt_d(x, d), " %")
+}
+
+moda <- function(x) {
+  u <- unique(x)
+  u[which.max(tabulate(match(x, u)))]
+}
+
+```
+
+**Universidad Pedagógica y Tecnológica de Colombia (UPTC)**
+
+**Asignatura:** Ciencia de Datos y Aprendizaje Automático para la Toma de Decisiones
+
+**Docente:** Jairo Enrique Alba Talero
+
+**Estudiante:** Leander Bautista
+
+---
+
+# Introducción
+
+Cada nacimiento en Colombia queda registrado en un certificado de nacido vivo que alimenta las Estadísticas Vitales (EEVV) del Departamento Administrativo Nacional de Estadística (DANE). Entre otras variables, el certificado recoge cuántas consultas prenatales tuvo la madre durante la gestación. El propio DANE define, a partir de esta variable, el indicador *porcentaje de nacidos vivos con cuatro controles prenatales o más* (DANE, ficha metodológica DSO-EEVV-FME-001).
+
+Este informe explora los microdatos anonimizados de nacimientos de 2024 para describir cómo se distribuye el número de consultas prenatales y cómo varía entre territorios, regímenes de seguridad social en salud, niveles educativos de la madre y áreas de residencia.
+
+El análisis es **exploratorio y descriptivo**: describe diferencias y asociaciones, pero no establece relaciones causales.
+
+# Planteamiento del problema
+
+El control prenatal es un componente central de la atención en salud durante el embarazo, y el DANE publica un indicador oficial para monitorearlo (cuatro o más controles). Sin embargo, un promedio nacional puede ocultar diferencias importantes entre territorios y grupos de población.
+
+Los microdatos de EEVV permiten observar esas diferencias con un nivel de detalle municipal, porque cada registro incluye el departamento y municipio de residencia de la madre.
+
+**Pregunta de investigación.** En 2024, ¿cómo varía el número de consultas prenatales de los nacidos vivos en Colombia según el municipio de residencia de la madre, su régimen de seguridad social en salud, su nivel educativo y su área de residencia, y cuáles son los diez municipios con menor porcentaje de nacidos vivos con cuatro o más consultas prenatales?
+
+# Objetivo general
+
+Analizar la distribución del número de consultas prenatales de los nacidos vivos en Colombia durante 2024 y su variación territorial y según características de la madre, a partir de los microdatos de Estadísticas Vitales del DANE.
+
+# Objetivos específicos
+
+1. **Caracterizar** la distribución del número de consultas prenatales (media, mediana, moda, dispersión, cuartiles y valores extremos) y el porcentaje de nacidos vivos con cuatro o más consultas.
+2. **Comparar** el número de consultas prenatales según el régimen de seguridad social en salud, el nivel educativo de la madre y el área de residencia.
+3. **Identificar** los diez municipios con menor porcentaje de nacidos vivos con cuatro o más consultas prenatales, entre los municipios con suficiente número de nacimientos, y contrastarlos con el comportamiento departamental y nacional.
+
+# Descripción del conjunto de datos
+
+- **Fuente:** DANE, Archivo Nacional de Datos (ANDA / Microdatos), *Estadísticas Vitales – EEVV – 2024*, catálogo 878: https://microdatos.dane.gov.co/index.php/catalog/878
+- **Naturaleza:** registro administrativo continuo basado en los certificados de nacido vivo. Unidad de observación: un nacimiento.
+- **Archivo utilizado:** `BD-EEVV-Nacimientos-2024.csv`.
+- **Codificación geográfica:** DIVIPOLA del DANE, versión de octubre de 2026.
+- **Fecha de descarga:** 22 de noviembre de 2026.
+- **Acceso y uso:** microdatos anonimizados de uso público.
+
+```{r lectura}
+# Lectura de los microdatos
+# Se conservan las columnas como texto para mantener los ceros a la izquierda.
+
+nac_raw <- read_csv(
+  ruta_nac,
+  col_types = cols(.default = col_character()),
+  locale = locale(encoding = "latin1")
+)
+
+nac <- clean_names(nac_raw)
+
+dim(nac)
+```
+
+```{r inspeccion}
+glimpse(nac)
+```
+
+```{r primeras}
+head(nac, 5)
+```
+
+# Selección de variables
+
+| Nombre original | Nombre descriptivo | Tipo | Descripción | Unidad / categorías | Justificación |
+|---|---|---|---|---|---|
+| `NUMCONSUL` | Consultas prenatales | Cuantitativa discreta | Número de consultas prenatales que tuvo la madre | Conteo | Variable principal |
+| `SEG_SOCIAL` | Régimen de seguridad social en salud | Cualitativa nominal | Régimen de la madre | Contributivo, subsidiado, excepción, especial, no asegurado | Permite comparar grupos |
+| `NIV_EDUM` | Nivel educativo de la madre | Cualitativa ordinal | Último nivel de estudios aprobado | 14 categorías, agrupadas en 8 | Característica social |
+| `AREA_RES` | Área de residencia | Cualitativa nominal | Área de residencia habitual | Cabecera municipal, centro poblado, rural disperso | Contraste urbano-rural |
+| `CODPTORE`, `CODMUNRE` | Departamento y municipio de residencia | Geográfica | Códigos DIVIPOLA | Código de 2 y 3 dígitos | Ranking territorial |
+| `TIPOFORMULARIO` | Tipo de formulario | Cualitativa nominal | Tipo de certificado | 1, 2, 3 | Determina disponibilidad de información |
+
+Se utiliza el **lugar de residencia de la madre** y no el lugar de ocurrencia del parto, porque describe el territorio donde vive la población atendida.
+
+**Codificación de las categorías.** Las etiquetas de las variables `SEG_SOCIAL`, `NIV_EDUM` y `AREA_RES` siguen el orden de las opciones del certificado de nacido vivo 2024. Deben confirmarse con el diccionario oficial de datos del catálogo 878 antes de la entrega definitiva.
+
+```{r etiquetas}
+et_regimen <- c(
+  "1" = "Contributivo",
+  "2" = "Subsidiado",
+  "3" = "Excepción",
+  "4" = "Especial",
+  "5" = "No asegurado",
+  "9" = "Sin información"
+)
+
+et_area <- c(
+  "1" = "Cabecera municipal",
+  "2" = "Centro poblado",
+  "3" = "Rural disperso"
+)
+
+et_nivel <- c(
+  "01" = "Ninguno / preescolar",
+  "13" = "Ninguno / preescolar",
+  "02" = "Primaria",
+  "03" = "Secundaria",
+  "04" = "Media",
+  "05" = "Media",
+  "06" = "Media",
+  "07" = "Técnica / tecnológica",
+  "08" = "Técnica / tecnológica",
+  "09" = "Profesional",
+  "10" = "Posgrado",
+  "11" = "Posgrado",
+  "12" = "Posgrado",
+  "99" = "Sin información"
+)
+
+niveles_educ <- c(
+  "Ninguno / preescolar",
+  "Primaria",
+  "Secundaria",
+  "Media",
+  "Técnica / tecnológica",
+  "Profesional",
+  "Posgrado",
+  "Sin información"
+)
+```
+
+# Metodología de limpieza
+
+## Lectura de la información geográfica
+
+Se incorporan los archivos DIVIPOLA para relacionar los códigos de residencia con los nombres de los departamentos y municipios.
+
+```{r geografia}
+mun <- read_excel(
+  ruta_mun,
+  sheet = "Municipios",
+  skip = 11,
+  col_names = FALSE,
+  col_types = "text"
+)
+
+mun <- mun[, 1:5]
+
+names(mun) <- c(
+  "cod_dpto",
+  "nom_dpto",
+  "cod_mpio",
+  "nom_mpio",
+  "tipo"
+)
+
+mun <- mun |>
+  filter(str_detect(cod_mpio, "^\\d{5}$"))
+
+dep <- read_excel(
+  ruta_dep,
+  sheet = "Departamentos",
+  skip = 10,
+  col_names = FALSE,
+  col_types = "text"
+)
+
+dep <- dep[, 1:2]
+
+names(dep) <- c("cod_dpto", "nom_dpto")
+
+dep <- dep |>
+  filter(str_detect(cod_dpto, "^\\d{2}$"))
+
+c(
+  departamentos = nrow(dep),
+  municipios_y_areas = nrow(mun)
+)
+```
+
+## Datos perdidos
+
+Se distinguen dos situaciones: celdas vacías y códigos especiales como `9`, `99` o `999`, que deben interpretarse según la documentación y no convertirse automáticamente en valores perdidos.
+
+```{r faltantes}
+faltantes <- nac |>
+  summarise(across(everything(), ~ sum(is.na(.)))) |>
+  pivot_longer(
+    everything(),
+    names_to = "variable",
+    values_to = "n_vacios"
+  ) |>
+  mutate(
+    pct_vacios = round(100 * n_vacios / nrow(nac), 2)
+  ) |>
+  arrange(desc(pct_vacios))
+
+kable(
+  filter(faltantes, n_vacios > 0),
+  digits = 2,
+  col.names = c("Variable", "Celdas vacías", "% vacías"),
+  caption = "Variables con celdas vacías"
+)
+```
+
+Los códigos especiales de las variables de interés se cruzan con el tipo de formulario:
+
+```{r codigos-especiales}
+nac |>
+  count(
+    tipoformulario,
+    numconsul_99 = numconsul == "99",
+    seg_social_9 = seg_social == "9"
+  ) |>
+  kable(
+    col.names = c(
+      "Tipo de formulario",
+      "NUMCONSUL = 99",
+      "SEG_SOCIAL = 9",
+      "Registros"
+    ),
+    caption = "Códigos especiales según tipo de formulario"
+  )
+```
+
+**Hallazgo.** Los registros con `NUMCONSUL = 99` y `SEG_SOCIAL = 9` son exactamente los de los formularios tipo 2 y 3. El formulario abreviado puede no incluir varias preguntas del certificado completo, entre ellas el número de consultas prenatales. Esta correspondencia debe confirmarse con el diccionario de datos oficial.
+
+**Decisión.** El análisis de consultas prenatales se restringe a los registros del formulario tipo 1, que son los que contienen la información necesaria. No se imputan valores a los formularios que no recogen esta variable.
+
+Los registros sin lugar de residencia de la madre se mantienen en el análisis nacional y por grupos, pero se excluyen del análisis territorial.
+
+## Datos duplicados
+
+```{r duplicados}
+n_dup_total <- sum(duplicated(nac))
+
+dup_por_form <- nac |>
+  filter(duplicated(nac)) |>
+  count(tipoformulario)
+
+nac_f1 <- nac |>
+  filter(tipoformulario == "1")
+
+n_dup_f1 <- sum(duplicated(nac_f1))
+
+tibble(
+  conjunto = c(
+    "Archivo completo",
+    "Formulario tipo 1 (base de análisis)"
+  ),
+  filas = c(nrow(nac), nrow(nac_f1)),
+  duplicadas = c(n_dup_total, n_dup_f1),
+  porcentaje = round(
+    100 * c(
+      n_dup_total / nrow(nac),
+      n_dup_f1 / nrow(nac_f1)
+    ),
+    2
+  )
+) |>
+  kable(
+    col.names = c(
+      "Conjunto",
+      "Filas",
+      "Filas completamente duplicadas",
+      "%"
+    ),
+    format.args = list(
+      big.mark = ".",
+      decimal.mark = ","
+    )
+  )
+
+dup_por_form
+```
+
+El archivo no tiene un identificador único por nacimiento. Por esta razón, dos nacimientos distintos pueden producir filas idénticas.
+
+No se eliminan automáticamente los registros repetidos, porque no existe evidencia suficiente para afirmar que corresponden al mismo nacimiento.
+
+Como comprobación de sensibilidad se calcula el indicador principal con y sin filas completamente duplicadas:
+
+```{r sensibilidad}
+ind_con <- mean(
+  as.integer(nac_f1$numconsul) >= 4
+) * 100
+
+ind_sin <- mean(
+  as.integer(distinct(nac_f1)$numconsul) >= 4
+) * 100
+
+tibble(
+  escenario = c("Con duplicados", "Sin duplicados"),
+  porcentaje = c(ind_con, ind_sin)
+) |>
+  kable(
+    digits = 2,
+    col.names = c("Escenario", "% con 4 o más consultas")
+  )
+```
+
+## Preparación final
+
+```{r preparacion}
+base <- nac_f1 |>
+  mutate(
+    numconsul = as.integer(numconsul),
+
+    regimen = factor(
+      unname(et_regimen[seg_social]),
+      levels = c(
+        "Contributivo",
+        "Subsidiado",
+        "Excepción",
+        "Especial",
+        "No asegurado"
+      )
+    ),
+
+    nivel_educ = factor(
+      unname(et_nivel[niv_edum]),
+      levels = niveles_educ
+    ),
+
+    area_res = factor(
+      unname(et_area[area_res]),
+      levels = c(
+        "Cabecera municipal",
+        "Centro poblado",
+        "Rural disperso"
+      )
+    ),
+
+    cod_mpio_res = if_else(
+      !is.na(codptore) & !is.na(codmunre),
+      paste0(codptore, codmunre),
+      NA_character_
+    ),
+
+    ge4 = numconsul >= 4
+  )
+
+# Verificaciones
+stopifnot(!anyNA(base$numconsul))
+stopifnot(!any(base$numconsul == 99L))
+
+stopifnot(
+  all(na.omit(base$cod_mpio_res) %in% mun$cod_mpio)
+)
+
+n_total <- nrow(nac)
+n_base <- nrow(base)
+n_excl <- n_total - n_base
+n_sin_res <- sum(is.na(base$cod_mpio_res))
+
+tibble(
+  concepto = c(
+    "Registros del archivo",
+    "Base de análisis",
+    "Excluidos por formularios 2 y 3",
+    "Sin residencia identificada"
+  ),
+  cantidad = c(
+    n_total,
+    n_base,
+    n_excl,
+    n_sin_res
+  )
+) |>
+  kable(
+    col.names = c("Concepto", "Cantidad"),
+    format.args = list(big.mark = ".", decimal.mark = ",")
+  )
+```
+
+**Resumen de las transformaciones**
+
+1. Lectura del CSV en latin-1 con todas las columnas como texto.
+2. Estandarización de los nombres de las variables.
+3. Restricción a los registros del formulario tipo 1.
+4. Conversión de consultas prenatales a valores enteros.
+5. Asignación de etiquetas a las categorías de régimen, nivel educativo y área.
+6. Construcción del código DIVIPOLA de cinco dígitos.
+7. Creación de la variable binaria `ge4`, que identifica cuatro o más consultas.
+
+# Análisis exploratorio
+
+## Estadística descriptiva de las consultas prenatales
+
+Se calculan medidas de tendencia central, dispersión, posición y valores extremos para caracterizar el comportamiento de las consultas prenatales.
+
+```{r descriptiva}
+x <- base$numconsul
+
+desc <- tibble(
+  estadistico = c(
+    "n",
+    "Media",
+    "Mediana",
+    "Moda",
+    "Mínimo",
+    "Máximo",
+    "Rango",
+    "Varianza",
+    "Desviación estándar",
+    "Q1 (P25)",
+    "Q3 (P75)",
+    "Rango intercuartílico",
+    "P5",
+    "P10",
+    "P90",
+    "P95",
+    "P99"
+  ),
+
+  valor = c(
+    length(x),
+    mean(x),
+    median(x),
+    moda(x),
+    min(x),
+    max(x),
+    diff(range(x)),
+    var(x),
+    sd(x),
+    unname(quantile(x, c(.25, .75))),
+    IQR(x),
+    unname(quantile(x, c(.05, .10, .90, .95, .99)))
+  )
+)
+
+kable(
+  desc,
+  digits = 3,
+  col.names = c("Estadístico", "Valor"),
+  format.args = list(
+    big.mark = ".",
+    decimal.mark = ","
+  ),
+  caption = "Estadística descriptiva de las consultas prenatales, 2024"
+)
+
+# Valores extremos mediante criterio de Tukey
+lim_inf <- unname(
+  quantile(x, .25) - 1.5 * IQR(x)
+)
+
+lim_sup <- unname(
+  quantile(x, .75) + 1.5 * IQR(x)
+)
+
+n_atip_sup <- sum(x > lim_sup)
+n_cero <- sum(x == 0)
+
+media_nc <- mean(x)
+mediana_nc <- median(x)
+moda_nc <- moda(x)
+sd_nc <- sd(x)
+
+p_ge4 <- 100 * mean(base$ge4)
+p_cero <- 100 * mean(x == 0)
+p_lt4 <- 100 - p_ge4
+```
+
+Los valores extremos se identifican mediante el criterio de Tukey (1,5 veces el rango intercuartílico).
+
+El intervalo de referencia va de `r fmt_d(lim_inf, 1)` a `r fmt_d(lim_sup, 1)` consultas. Se identifican `r fmt_n(n_atip_sup)` registros por encima del límite superior y `r fmt_n(n_cero)` registros sin consultas prenatales.
+
+Estos valores se conservan porque son posibles dentro del contexto del estudio y no existe evidencia suficiente para considerarlos errores. Se reportan también la mediana y los cuartiles para complementar la interpretación de la media.
+
+## Distribución de frecuencias
+
+```{r tabla-frecuencias-nc}
+tab_nc <- base |>
+  mutate(
+    consultas = factor(
+      if_else(
+        numconsul >= 13,
+        "13 o más",
+        as.character(numconsul)
+      ),
+      levels = c(as.character(0:12), "13 o más")
+    )
+  ) |>
+  count(consultas, name = "n") |>
+  mutate(
+    frecuencia_relativa = n / sum(n),
+    porcentaje = 100 * frecuencia_relativa,
+    porcentaje_acumulado = cumsum(porcentaje)
+  )
+
+kable(
+  tab_nc,
+  digits = c(0, 0, 4, 2, 2),
+  col.names = c(
+    "Consultas prenatales",
+    "Frecuencia absoluta",
+    "Frecuencia relativa",
+    "Porcentaje",
+    "Porcentaje acumulado"
+  ),
+  format.args = list(
+    big.mark = ".",
+    decimal.mark = ","
+  )
+)
+```
+
+## Variables cualitativas
+
+Se presentan las frecuencias absolutas y relativas de las variables relacionadas con las características de las madres.
+
+```{r tablas-cualitativas}
+tab_freq <- function(df, var) {
+  df |>
+    count({{ var }}, name = "n") |>
+    mutate(
+      frecuencia_relativa = n / sum(n),
+      porcentaje = 100 * frecuencia_relativa
+    ) |>
+    arrange(desc(n))
+}
+
+fmt_args <- list(
+  big.mark = ".",
+  decimal.mark = ","
+)
+
+kable(
+  tab_freq(base, regimen),
+  digits = c(0, 0, 4, 2),
+  col.names = c(
+    "Régimen",
+    "Frecuencia absoluta",
+    "Frecuencia relativa",
+    "Porcentaje"
+  ),
+  format.args = fmt_args,
+  caption = "Régimen de seguridad social en salud"
+)
+
+kable(
+  tab_freq(base, nivel_educ),
+  digits = c(0, 0, 4, 2),
+  col.names = c(
+    "Nivel educativo de la madre",
+    "Frecuencia absoluta",
+    "Frecuencia relativa",
+    "Porcentaje"
+  ),
+  format.args = fmt_args,
+  caption = "Nivel educativo de la madre"
+)
+
+kable(
+  tab_freq(base, area_res),
+  digits = c(0, 0, 4, 2),
+  col.names = c(
+    "Área de residencia",
+    "Frecuencia absoluta",
+    "Frecuencia relativa",
+    "Porcentaje"
+  ),
+  format.args = fmt_args,
+  caption = "Área de residencia"
+)
+```
+
+## Comparación entre categorías
+
+Se comparan las medidas de tendencia central y el porcentaje de nacidos vivos con cuatro o más consultas según las características de la madre.
+
+```{r comparacion}
+resumen_grupo <- function(df, var) {
+
+  df |>
+    filter(!is.na({{ var }})) |>
+    group_by({{ var }}) |>
+    summarise(
+      n = n(),
+      media = mean(numconsul),
+      mediana = median(numconsul),
+      pct_ge4 = 100 * mean(ge4),
+      .groups = "drop"
+    )
+}
+
+r_reg <- resumen_grupo(base, regimen)
+r_niv <- resumen_grupo(base, nivel_educ)
+r_are <- resumen_grupo(base, area_res)
+
+val <- function(tab, col, nivel, medida) {
+  tab[[medida]][as.character(tab[[col]]) == nivel]
+}
+
+cols_g <- c(
+  "Categoría",
+  "Nacidos vivos",
+  "Media",
+  "Mediana",
+  "% con 4 o más consultas"
+)
+
+kable(
+  r_reg,
+  digits = c(0, 0, 2, 1, 2),
+  col.names = cols_g,
+  format.args = fmt_args,
+  caption = "Consultas prenatales según régimen de seguridad social"
+)
+
+kable(
+  r_niv,
+  digits = c(0, 0, 2, 1, 2),
+  col.names = cols_g,
+  format.args = fmt_args,
+  caption = "Consultas prenatales según nivel educativo"
+)
+
+kable(
+  r_are,
+  digits = c(0, 0, 2, 1, 2),
+  col.names = cols_g,
+  format.args = fmt_args,
+  caption = "Consultas prenatales según área de residencia"
+)
+```
+
+# Visualizaciones
+
+Cada gráfico responde a una pregunta analítica concreta y permite identificar patrones en la distribución de las consultas prenatales.
+
+## Distribución de consultas prenatales
+
+**Pregunta 1: ¿Cómo se distribuye el número de consultas prenatales y qué parte queda por debajo de cuatro?**
+
+```{r graf-distribucion}
+ggplot(tab_nc, aes(x = consultas, y = n)) +
+  geom_col(fill = "#2C7FB8") +
+  geom_vline(
+    xintercept = 4.5,
+    linetype = "dashed",
+    color = "firebrick"
+  ) +
+  annotate(
+    "text",
+    x = 4.4,
+    y = max(tab_nc$n),
+    label = "Menos de 4 consultas",
+    hjust = 1,
+    color = "firebrick",
+    size = 3.5
+  ) +
+  scale_y_continuous(
+    labels = label_number(
+      big.mark = ".",
+      decimal.mark = ","
+    )
+  ) +
+  labs(
+    title = "Distribución del número de consultas prenatales, Colombia 2024",
+    subtitle = "Nacidos vivos con formulario completo (tipo 1)",
+    x = "Consultas prenatales",
+    y = "Nacidos vivos",
+    caption = "Fuente: DANE, Estadísticas Vitales 2024. Elaboración propia."
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+## Consultas según régimen de seguridad social
+
+**Pregunta 2: ¿Cambia el número de consultas según el régimen de seguridad social?**
+
+```{r graf-regimen}
+ggplot(
+  filter(base, !is.na(regimen)),
+  aes(x = regimen, y = numconsul)
+) +
+  geom_boxplot(
+    fill = "#9ECAE1",
+    outlier.size = 0.6,
+    outlier.alpha = 0.15
+  ) +
+  labs(
+    title = "Consultas prenatales según régimen de seguridad social",
+    x = "Régimen de seguridad social en salud",
+    y = "Consultas prenatales",
+    caption = "Fuente: DANE, Estadísticas Vitales 2024. Elaboración propia."
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+## Consultas según nivel educativo y área de residencia
+
+**Pregunta 3: ¿Cómo cambia el porcentaje con cuatro o más consultas según nivel educativo y área de residencia?**
+
+```{r graf-pct-grupos}
+graf_pct <- function(tab, var, titulo, xlab) {
+
+  ggplot(tab, aes(x = .data[[var]], y = pct_ge4)) +
+    geom_col(fill = "#2C7FB8") +
+    geom_text(
+      aes(
+        label = paste0(
+          format(
+            round(pct_ge4, 1),
+            decimal.mark = ","
+          ),
+          " %"
+        )
+      ),
+      vjust = -0.4,
+      size = 3.5
+    ) +
+    scale_y_continuous(
+      limits = c(0, 105),
+      labels = label_number(suffix = " %")
+    ) +
+    labs(
+      title = titulo,
+      x = xlab,
+      y = "Nacidos vivos con 4 o más consultas (%)",
+      caption = "Fuente: DANE, Estadísticas Vitales 2024. Elaboración propia."
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      axis.text.x = element_text(
+        angle = 25,
+        hjust = 1
+      )
+    )
+}
+
+graf_pct(
+  filter(r_niv, nivel_educ != "Sin información"),
+  "nivel_educ",
+  "Nacidos vivos con 4 o más consultas según nivel educativo",
+  "Nivel educativo de la madre"
+)
+
+graf_pct(
+  r_are,
+  "area_res",
+  "Nacidos vivos con 4 o más consultas según área de residencia",
+  "Área de residencia de la madre"
+)
+```
+
+# Ranking territorial
+
+## Criterio de selección
+
+Se compara el porcentaje de nacidos vivos con cuatro o más consultas prenatales por municipio de residencia de la madre.
+
+Para evitar que los municipios con pocos nacimientos presenten porcentajes demasiado inestables, se incluyen únicamente aquellos con **300 nacimientos o más**.
+
+Este umbral corresponde a una decisión metodológica del análisis y no a una norma del DANE.
+
+## Municipios con menor porcentaje de consultas prenatales
+
+```{r ranking}
+umbral <- 300
+
+terr <- base |>
+  filter(!is.na(cod_mpio_res))
+
+mpio_res <- terr |>
+  group_by(cod_mpio_res) |>
+  summarise(
+    n_nac = n(),
+    media = mean(numconsul),
+    pct_ge4 = 100 * mean(ge4),
+    .groups = "drop"
+  ) |>
+  left_join(
+    mun,
+    by = c("cod_mpio_res" = "cod_mpio")
+  )
+
+n_mpio_total <- nrow(mpio_res)
+
+n_mpio_umbral <- sum(
+  mpio_res$n_nac >= umbral
+)
+
+top10 <- mpio_res |>
+  filter(n_nac >= umbral) |>
+  arrange(pct_ge4) |>
+  slice_head(n = 10) |>
+  mutate(
+    posicion = row_number(),
+    municipio = str_to_title(nom_mpio),
+    departamento = str_to_title(nom_dpto),
+    etiqueta = paste0(
+      municipio,
+      " (",
+      departamento,
+      ")"
+    )
+  )
+
+kable(
+  top10 |>
+    select(
+      posicion,
+      municipio,
+      departamento,
+      n_nac,
+      media,
+      pct_ge4
+    ),
+  digits = c(0, 0, 0, 0, 2, 2),
+  col.names = c(
+    "Posición",
+    "Municipio",
+    "Departamento",
+    "Nacidos vivos",
+    "Media de consultas",
+    "% con 4 o más consultas"
+  ),
+  format.args = fmt_args,
+  caption = "Diez municipios con menor porcentaje de nacidos vivos con 4 o más consultas prenatales"
+)
+```
+
+```{r graf-top10}
+ggplot(
+  top10,
+  aes(
+    x = fct_reorder(etiqueta, pct_ge4, .desc = TRUE),
+    y = pct_ge4
+  )
+) +
+  geom_col(fill = "#CB181D") +
+  geom_text(
+    aes(
+      label = paste0(
+        format(
+          round(pct_ge4, 1),
+          decimal.mark = ","
+        ),
+        " %"
+      )
+    ),
+    hjust = -0.1,
+    size = 3.5
+  ) +
+  coord_flip() +
+  scale_y_continuous(
+    limits = c(0, 100),
+    labels = label_number(suffix = " %"),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  labs(
+    title = "Diez municipios con menor porcentaje de consultas prenatales",
+    subtitle = paste0(
+      "Residencia de la madre, 2024. Municipios con ",
+      umbral,
+      " nacimientos o más"
+    ),
+    x = NULL,
+    y = "Nacidos vivos con 4 o más consultas (%)",
+    caption = "Fuente: DANE, Estadísticas Vitales 2024. Elaboración propia."
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+## Contraste con el nivel departamental y nacional
+
+```{r departamentos}
+dpto_res <- terr |>
+  group_by(codptore) |>
+  summarise(
+    n_nac = n(),
+    media = mean(numconsul),
+    pct_ge4 = 100 * mean(ge4),
+    .groups = "drop"
+  ) |>
+  left_join(
+    dep,
+    by = c("codptore" = "cod_dpto")
+  ) |>
+  mutate(
+    departamento = str_to_title(nom_dpto)
+  )
+
+top10_dep <- dpto_res |>
+  arrange(pct_ge4) |>
+  slice_head(n = 10) |>
+  mutate(posicion = row_number())
+
+p_nac_res <- 100 * mean(terr$ge4)
+
+kable(
+  top10_dep |>
+    select(
+      posicion,
+      departamento,
+      n_nac,
+      media,
+      pct_ge4
+    ),
+  digits = c(0, 0, 0, 2, 2),
+  col.names = c(
+    "Posición",
+    "Departamento",
+    "Nacidos vivos",
+    "Media de consultas",
+    "% con 4 o más consultas"
+  ),
+  format.args = fmt_args,
+  caption = "Diez departamentos con menor porcentaje de nacidos vivos con 4 o más consultas prenatales"
+)
+```
+
+```{r graf-dispersion-mpios}
+ggplot(
+  filter(mpio_res, n_nac >= umbral),
+  aes(x = pct_ge4)
+) +
+  geom_histogram(
+    binwidth = 2,
+    fill = "#2C7FB8",
+    color = "white"
+  ) +
+  geom_vline(
+    xintercept = p_nac_res,
+    linetype = "dashed",
+    color = "firebrick"
+  ) +
+  labs(
+    title = "Dispersión municipal del porcentaje con 4 o más consultas prenatales",
+    subtitle = paste0(
+      "Municipios con ",
+      umbral,
+      " nacimientos o más. Línea punteada: promedio nacional"
+    ),
+    x = "Nacidos vivos con 4 o más consultas (%)",
+    y = "Municipios",
+    caption = "Fuente: DANE, Estadísticas Vitales 2024. Elaboración propia."
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+# Interpretación de resultados
+
+## Distribución general
+
+En 2024, los nacidos vivos con formulario completo tuvieron en promedio `r fmt_d(media_nc)` consultas prenatales, con una mediana de `r mediana_nc` y una moda de `r moda_nc`. La desviación estándar fue de `r fmt_d(sd_nc)`.
+
+El `r fmt_p(p_ge4)` tuvo cuatro o más consultas, mientras que el `r fmt_p(p_lt4)` quedó por debajo de ese umbral. Además, el `r fmt_p(p_cero)` no tuvo ninguna consulta.
+
+La distribución permite observar diferencias en la cantidad de controles prenatales recibidos por las madres.
+
+## Régimen de seguridad social
+
+El porcentaje con cuatro o más consultas fue de `r fmt_p(val(r_reg, "regimen", "Contributivo", "pct_ge4"))` en el régimen contributivo, `r fmt_p(val(r_reg, "regimen", "Subsidiado", "pct_ge4"))` en el subsidiado y `r fmt_p(val(r_reg, "regimen", "No asegurado", "pct_ge4"))` entre las madres no aseguradas.
+
+Este último grupo presenta una mediana de `r val(r_reg, "regimen", "No asegurado", "mediana")` consultas.
+
+## Nivel educativo
+
+El porcentaje con cuatro o más consultas presenta diferencias según el nivel educativo de la madre. Se observa un valor de `r fmt_p(val(r_niv, "nivel_educ", "Ninguno / preescolar", "pct_ge4"))` en el grupo sin estudios o con preescolar, `r fmt_p(val(r_niv, "nivel_educ", "Primaria", "pct_ge4"))` en primaria, `r fmt_p(val(r_niv, "nivel_educ", "Media", "pct_ge4"))` en media y `r fmt_p(val(r_niv, "nivel_educ", "Posgrado", "pct_ge4"))` en posgrado.
+
+## Área de residencia
+
+La cobertura de cuatro o más consultas fue de `r fmt_p(val(r_are, "area_res", "Cabecera municipal", "pct_ge4"))` en cabecera municipal, `r fmt_p(val(r_are, "area_res", "Centro poblado", "pct_ge4"))` en centros poblados y `r fmt_p(val(r_are, "area_res", "Rural disperso", "pct_ge4"))` en rural disperso.
+
+## Ranking territorial
+
+Entre los `r fmt_n(n_mpio_umbral)` municipios con al menos `r umbral` nacimientos, de un total de `r fmt_n(n_mpio_total)` municipios con datos de residencia, el de menor cobertura es `r top10$municipio[1]` (`r top10$departamento[1]`), con `r fmt_p(top10$pct_ge4[1])` de nacidos vivos con cuatro o más consultas.
+
+Este resultado se compara con el `r fmt_p(p_nac_res)` registrado en el conjunto nacional con residencia conocida.
+
+Los diez municipios del ranking pertenecen a los departamentos de `r paste(unique(top10$departamento), collapse = ", ")`.
+
+A nivel departamental, los menores porcentajes se encuentran en `r paste(top10_dep$departamento[1:3], collapse = ", ")`.
+
+## Principales diferencias identificadas
+
+Las diferencias entre grupos y territorios muestran que el promedio nacional puede ocultar situaciones particulares.
+
+El municipio con menor cobertura está `r fmt_d(p_nac_res - top10$pct_ge4[1], 1)` puntos porcentuales por debajo del promedio nacional.
+
+Las diferencias observadas entre régimen de salud, nivel educativo y área de residencia son asociaciones descriptivas. Estas características pueden estar relacionadas entre sí y con las condiciones territoriales, por lo que no se pueden interpretar como relaciones causales.
+
+# Conclusiones
+
+1. La mayoría de los nacidos vivos con formulario completo en 2024 tuvo cuatro o más consultas prenatales (`r fmt_p(p_ge4)`). Sin embargo, el `r fmt_p(p_lt4)` quedó por debajo de este umbral, incluyendo el `r fmt_p(p_cero)` que no registró ninguna consulta.
+
+2. El número de consultas presenta diferencias según el régimen de seguridad social, el nivel educativo de la madre y el área de residencia. Estas diferencias permiten identificar grupos que podrían requerir mayor atención en las estrategias de seguimiento prenatal.
+
+3. La cobertura presenta variaciones territoriales importantes. Los diez municipios con menor porcentaje pertenecen a `r paste(unique(top10$departamento), collapse = ", ")`, lo que evidencia la importancia de complementar los indicadores nacionales con análisis municipales.
+
+4. El indicador de cuatro o más consultas permite evaluar la cantidad de controles prenatales registrados, pero no mide directamente su calidad, oportunidad o contenido.
+
+# Limitaciones del análisis
+
+- **Análisis descriptivo:** no se estiman efectos ni relaciones causales. Las características sociales, económicas y territoriales pueden estar relacionadas entre sí.
+- **Cobertura de la variable:** `NUMCONSUL` solo se encuentra disponible en el formulario tipo 1. Los formularios 2 y 3, correspondientes a `r fmt_n(n_excl)` registros (`r fmt_p(100 * n_excl / n_total)` del archivo), quedan fuera del análisis.
+- **Codificación:** las etiquetas de las categorías deben contrastarse con el diccionario oficial de datos.
+- **Registros tardíos:** los registros tardíos pueden no estar incorporados en los microdatos anonimizados de la serie histórica.
+- **Inestabilidad municipal:** el ranking depende del umbral de 300 nacimientos y de la calidad del diligenciamiento del certificado.
+- **Variables agrupadas:** peso, talla y edad de la madre se encuentran en categorías, por lo que no se analizaron como variables continuas.
+- **Datos sin residencia:** `r fmt_n(n_sin_res)` registros no tienen lugar de residencia identificado y no entran al análisis territorial.
+
+# Referencias y fuentes de información
+
+- Departamento Administrativo Nacional de Estadística (DANE). *Estadísticas Vitales (EEVV) 2024*. Archivo Nacional de Datos, catálogo 878. https://microdatos.dane.gov.co/index.php/catalog/878
+
+- DANE. *Ficha metodológica Estadísticas Vitales (EEVV)*, código DSO-EEVV-FME-001.
+
+- DANE. *Certificado de nacido vivo 2024*. Cuestionarios certificados, catálogo 878.
+
+- DANE. *Codificación de la División Político-Administrativa de Colombia (DIVIPOLA)*, octubre de 2026. https://www.dane.gov.co/index.php/sistema-estadistico-nacional-sen/normas-y-estandares/nomenclaturas-y-clasificaciones/nomenclaturas/codificacion-de-la-division-politico-administrativa-de-colombia-divipola
+
+- DANE. *Datos de nacimientos en Colombia*. https://www.dane.gov.co/index.php/estadisticas-por-tema/salud/nacimientos-y-defunciones/nacimientos
+
+- R Core Team. *R: A language and environment for statistical computing*. R Foundation for Statistical Computing. https://www.R-project.org/
+
+- Wickham, H. et al. (2019). Welcome to the tidyverse. *Journal of Open Source Software*, 4(43), 1686.
+
+- Paquetes utilizados: `tidyverse`, `readxl`, `janitor`, `knitr`, `rmarkdown`, `scales`.
+
+```{r sesion, include=FALSE}
+sessionInfo()
+```
